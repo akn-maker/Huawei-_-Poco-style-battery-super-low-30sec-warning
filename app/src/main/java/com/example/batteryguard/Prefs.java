@@ -15,6 +15,9 @@ final class Prefs {
     static boolean enabled(Context c) { return sp(c).getBoolean("enabled", false); }
     static void setEnabled(Context c, boolean v) { sp(c).edit().putBoolean("enabled", v).apply(); }
 
+    static boolean sound(Context c) { return sp(c).getBoolean("sound", true); }
+    static void setSound(Context c, boolean v) { sp(c).edit().putBoolean("sound", v).apply(); }
+
     /** Battery % at which the warning + countdown appears. */
     static int threshold(Context c) { return sp(c).getInt("threshold", 5); }
     static void setThreshold(Context c, int v) { sp(c).edit().putInt("threshold", v).apply(); }

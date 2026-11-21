@@ -10,6 +10,8 @@ import android.content.IntentFilter;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -50,6 +52,7 @@ public class LowBatteryActivity extends Activity {
     private int remaining;
     private boolean demo;
     private boolean receiverRegistered;
+    private ToneGenerator tone;
 
     private final Runnable tick = new Runnable() {
         @Override
@@ -59,6 +62,7 @@ public class LowBatteryActivity extends Activity {
                 showExtender();
             } else {
                 updateMessage();
+                beep(remaining <= 5 ? ToneGenerator.TONE_PROP_BEEP2 : ToneGenerator.TONE_PROP_BEEP);
                 handler.postDelayed(this, 1000);
             }
         }
@@ -87,6 +91,12 @@ public class LowBatteryActivity extends Activity {
         }
         getWindow().setStatusBarColor(Color.BLACK);
         getWindow().setNavigationBarColor(Color.BLACK);
+
+        try {
+            tone = new ToneGenerator(AudioManager.STREAM_ALARM, 80);
+        } catch (RuntimeException ignored) {
+            tone = null;
+        }
 
         root = new FrameLayout(this);
         setContentView(root);
@@ -117,6 +127,10 @@ public class LowBatteryActivity extends Activity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        if (tone != null) {
+            tone.release();
+            tone = null;
+        }
         if (receiverRegistered) {
             try { unregisterReceiver(powerReceiver); } catch (Exception ignored) {}
             receiverRegistered = false;
@@ -231,6 +245,7 @@ public class LowBatteryActivity extends Activity {
         root.addView(card, cp);
 
         updateMessage();
+        beep(ToneGenerator.TONE_PROP_BEEP);
         handler.removeCallbacks(tick);
         handler.postDelayed(tick, 1000);
     }
@@ -251,6 +266,7 @@ public class LowBatteryActivity extends Activity {
     private void showExtender() {
         handler.removeCallbacks(tick);
         state = STATE_EXTENDER;
+        beep(ToneGenerator.TONE_PROP_NACK);
 
         Window w = getWindow();
         w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); // let the screen time out
@@ -335,6 +351,13 @@ public class LowBatteryActivity extends Activity {
     }
 
     // -------------------------------------------------------------- helpers
+
+    private void beep(int toneType) {
+        if (tone == null || !Prefs.sound(this)) return;
+        try {
+            tone.startTone(toneType, 300);
+        } catch (RuntimeException ignored) {}
+    }
 
     private TextView text(String s, int sp, int color, boolean bold) {
         TextView t = new TextView(this);
