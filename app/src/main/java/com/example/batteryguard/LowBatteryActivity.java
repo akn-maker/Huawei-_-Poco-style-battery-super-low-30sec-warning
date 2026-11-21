@@ -24,6 +24,8 @@ import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.Button;
@@ -93,7 +95,7 @@ public class LowBatteryActivity extends Activity {
         getWindow().setNavigationBarColor(Color.BLACK);
 
         try {
-            tone = new ToneGenerator(AudioManager.STREAM_ALARM, 80);
+            tone = new ToneGenerator(AudioManager.STREAM_ALARM, 100);
         } catch (RuntimeException ignored) {
             tone = null;
         }
@@ -153,7 +155,7 @@ public class LowBatteryActivity extends Activity {
     @Override
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
-        if (state == STATE_EXTENDER && !demo) return; // locked in, like the original
+        if (state != STATE_NONE && !demo) return; // no way out of the warning or the extender (except a charger)
         super.onBackPressed();
     }
 
@@ -224,11 +226,10 @@ public class LowBatteryActivity extends Activity {
         pill.setColor(0xFF6C7BF0);
         pill.setCornerRadius(dp(26));
         ok.setBackground(pill);
-        ok.setOnClickListener(v -> {
-            handler.removeCallbacks(tick);
-            state = STATE_NONE;
-            finishAndRemoveTask();
-        });
+        // "Got it" is deliberately disabled: the countdown can't be dismissed.
+        ok.setEnabled(false);
+        ok.setClickable(false);
+        ok.setAlpha(0.4f);
         card.addView(ok, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(52)));
 
@@ -337,17 +338,26 @@ public class LowBatteryActivity extends Activity {
                 FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
         bp.bottomMargin = dp(48);
         root.addView(bottom, bp);
+        handler.post(() -> hideSystemUi());
     }
 
     @SuppressWarnings("deprecation")
     private void hideSystemUi() {
-        getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        if (Build.VERSION.SDK_INT >= 30) {
+            WindowInsetsController c = getWindow().getInsetsController();
+            if (c != null) {
+                c.hide(WindowInsets.Type.systemBars());
+                c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        }
     }
 
     // -------------------------------------------------------------- helpers
