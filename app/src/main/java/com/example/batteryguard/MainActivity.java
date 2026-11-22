@@ -57,6 +57,7 @@ public class MainActivity extends Activity {
         sound.setOnCheckedChangeListener((b, on) -> Prefs.setSound(this, on));
         col.addView(sound, margin(0, 0, 0, 20));
 
+
         addSeek(col, "Warn at %d%% battery", 3, 20, Prefs.threshold(this),
                 v -> Prefs.setThreshold(this, v));
         addSeek(col, "Countdown: %d seconds", 5, 30, Prefs.countdown(this),

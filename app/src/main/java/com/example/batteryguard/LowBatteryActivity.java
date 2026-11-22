@@ -11,7 +11,9 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.media.AudioAttributes;
 import android.media.AudioManager;
+import android.media.MediaPlayer;
 import android.media.ToneGenerator;
 import android.os.BatteryManager;
 import android.os.Build;
@@ -19,6 +21,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
@@ -44,6 +47,7 @@ public class LowBatteryActivity extends Activity {
     static final String EXTRA_SECONDS = "seconds";
     static final String EXTRA_DEMO = "demo";
 
+    private static final int TRACK_SECONDS = 15;
     private static final int STATE_NONE = 0;
     private static final int STATE_WARNING = 1;
     private static final int STATE_EXTENDER = 2;
@@ -57,7 +61,16 @@ public class LowBatteryActivity extends Activity {
     private boolean demo;
     private boolean receiverRegistered;
     private ToneGenerator tone;
+    private MediaPlayer player;
     private boolean canDial;
+    private long dialerUntil; // while now < this, the dialer may stay in front
+
+    private final Runnable startTrack = new Runnable() {
+        @Override
+        public void run() {
+            if (state == STATE_WARNING) startCountdownSound(0);
+        }
+    };
 
     private final Runnable tick = new Runnable() {
         @Override
@@ -67,7 +80,7 @@ public class LowBatteryActivity extends Activity {
                 showExtender();
             } else {
                 updateMessage();
-                beep(remaining <= 5 ? ToneGenerator.TONE_PROP_BEEP2 : ToneGenerator.TONE_PROP_BEEP);
+                if (player == null) beep(remaining <= 5 ? ToneGenerator.TONE_PROP_BEEP2 : ToneGenerator.TONE_PROP_BEEP);
                 handler.postDelayed(this, 1000);
             }
         }
@@ -136,6 +149,7 @@ public class LowBatteryActivity extends Activity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        stopCustomSound();
         if (tone != null) {
             tone.release();
             tone = null;
@@ -172,6 +186,20 @@ public class LowBatteryActivity extends Activity {
         @Override
         public void run() {
             if (isFinishing() || demo || state == STATE_NONE) return;
+
+            // Never interrupt a phone call.
+            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            if (am != null && am.getMode() == AudioManager.MODE_IN_CALL) {
+                handler.postDelayed(this, 5000);
+                return;
+            }
+            // The user opened the dialer on purpose: leave it alone for a few minutes.
+            long now = SystemClock.elapsedRealtime();
+            if (now < dialerUntil) {
+                handler.postDelayed(this, dialerUntil - now + 200);
+                return;
+            }
+
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
             if (pm != null && !pm.isInteractive()) return; // screen is off: leave it alone
             if (isCharging()) return;
@@ -222,6 +250,7 @@ public class LowBatteryActivity extends Activity {
     }
 
     private void openDialer() {
+        dialerUntil = SystemClock.elapsedRealtime() + 4 * 60 * 1000L; // about 4 minutes, like the original
         try {
             startActivity(new Intent(Intent.ACTION_DIAL).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         } catch (ActivityNotFoundException ignored) {}
@@ -290,7 +319,13 @@ public class LowBatteryActivity extends Activity {
         hideSystemUi();
         handler.post(() -> hideSystemUi());
         updateMessage();
-        beep(ToneGenerator.TONE_PROP_BEEP);
+        int lead = seconds - TRACK_SECONDS; // longer countdown: wait so the track ends with the countdown
+        if (lead > 0) {
+            handler.postDelayed(startTrack, lead * 1000L);
+            beep(ToneGenerator.TONE_PROP_BEEP);
+        } else if (!startCountdownSound(-lead)) {
+            beep(ToneGenerator.TONE_PROP_BEEP);
+        }
         handler.removeCallbacks(tick);
         handler.postDelayed(tick, 1000);
     }
@@ -311,6 +346,7 @@ public class LowBatteryActivity extends Activity {
     private void showExtender() {
         handler.removeCallbacks(tick);
         state = STATE_EXTENDER;
+        stopCustomSound();
         beep(ToneGenerator.TONE_PROP_NACK);
 
         Window w = getWindow();
@@ -407,6 +443,37 @@ public class LowBatteryActivity extends Activity {
     }
 
     // -------------------------------------------------------------- helpers
+
+    /** Plays the built-in countdown track (res/raw/countdown.wav). Returns false on failure. */
+    private boolean startCountdownSound(int offsetSeconds) {
+        if (!Prefs.sound(this) || player != null) return player != null;
+        try {
+            MediaPlayer mp = new MediaPlayer();
+            mp.setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build());
+            android.content.res.AssetFileDescriptor afd = getResources().openRawResourceFd(R.raw.countdown);
+            mp.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+            afd.close();
+            mp.prepare();
+            if (offsetSeconds > 0) mp.seekTo(offsetSeconds * 1000);
+            mp.start();
+            player = mp;
+            return true;
+        } catch (Exception e) {
+            stopCustomSound();
+            return false;
+        }
+    }
+
+    private void stopCustomSound() {
+        if (player != null) {
+            try { player.stop(); } catch (Exception ignored) {}
+            try { player.release(); } catch (Exception ignored) {}
+            player = null;
+        }
+    }
 
     private void beep(int toneType) {
         if (tone == null || !Prefs.sound(this)) return;
