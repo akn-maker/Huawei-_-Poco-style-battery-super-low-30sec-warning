@@ -7,6 +7,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -17,6 +18,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
@@ -55,6 +57,7 @@ public class LowBatteryActivity extends Activity {
     private boolean demo;
     private boolean receiverRegistered;
     private ToneGenerator tone;
+    private boolean canDial;
 
     private final Runnable tick = new Runnable() {
         @Override
@@ -100,6 +103,10 @@ public class LowBatteryActivity extends Activity {
             tone = null;
         }
 
+        PackageManager pm = getPackageManager();
+        canDial = pm.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)
+                && pm.resolveActivity(new Intent(Intent.ACTION_DIAL), 0) != null;
+
         root = new FrameLayout(this);
         setContentView(root);
 
@@ -143,7 +150,7 @@ public class LowBatteryActivity extends Activity {
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus && state == STATE_EXTENDER) hideSystemUi();
+        if (hasFocus && state != STATE_NONE) hideSystemUi();
     }
 
     @Override
@@ -157,6 +164,39 @@ public class LowBatteryActivity extends Activity {
     public void onBackPressed() {
         if (state != STATE_NONE && !demo) return; // no way out of the warning or the extender (except a charger)
         super.onBackPressed();
+    }
+
+    // ----------------------------------------------------- stay on top
+
+    private final Runnable bringBack = new Runnable() {
+        @Override
+        public void run() {
+            if (isFinishing() || demo || state == STATE_NONE) return;
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null && !pm.isInteractive()) return; // screen is off: leave it alone
+            if (isCharging()) return;
+            try {
+                startActivity(new Intent(LowBatteryActivity.this, LowBatteryActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                        .putExtra(EXTRA_EXTENDER, state == STATE_EXTENDER)
+                        .putExtra(EXTRA_SECONDS, Math.max(remaining, 1)));
+            } catch (Exception ignored) {}
+        }
+    };
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        handler.removeCallbacks(bringBack);
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        // The user pressed Home / Recents: come straight back (unless charging, demo or screen off).
+        if (!demo && state != STATE_NONE && !isFinishing()) {
+            handler.postDelayed(bringBack, 400);
+        }
     }
 
     // ---------------------------------------------------------------- logic
@@ -213,7 +253,9 @@ public class LowBatteryActivity extends Activity {
         messageView.setGravity(Gravity.START);
         card.addView(messageView, lp(LinearLayout.LayoutParams.MATCH_PARENT, 0, 0, 0, 0, 10));
 
-        TextView note = text("When \"Battery life extender\" is enabled, you can answer or make calls.",
+        TextView note = text(canDial
+                        ? "When \"Battery life extender\" is enabled, you can answer or make calls."
+                        : "When \"Battery life extender\" is enabled, the screen dims to save power.",
                 12, 0xFFA8A8B4, false);
         note.setGravity(Gravity.START);
         card.addView(note, lp(LinearLayout.LayoutParams.MATCH_PARENT, 0, 0, 0, 0, 18));
@@ -245,6 +287,8 @@ public class LowBatteryActivity extends Activity {
         cp.rightMargin = dp(24);
         root.addView(card, cp);
 
+        hideSystemUi();
+        handler.post(() -> hideSystemUi());
         updateMessage();
         beep(ToneGenerator.TONE_PROP_BEEP);
         handler.removeCallbacks(tick);
@@ -289,7 +333,9 @@ public class LowBatteryActivity extends Activity {
             return true;
         });
         top.addView(title, lp(LinearLayout.LayoutParams.WRAP_CONTENT, 0, 0, 0, 0, 6));
-        top.addView(text("It supports answering or making short calls.", 14, 0xFF9A9AA5, false));
+        top.addView(text(canDial
+                ? "It supports answering or making short calls."
+                : "Screen dimmed to save power.", 14, 0xFF9A9AA5, false));
         FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP);
@@ -309,7 +355,7 @@ public class LowBatteryActivity extends Activity {
         dlp.bottomMargin = dp(14);
         mid.addView(dial, dlp);
         mid.addView(text("Double-tap to open \"Dial\"", 14, 0xFFD0D0DA, false));
-        root.addView(mid, new FrameLayout.LayoutParams(
+        if (canDial) root.addView(mid, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
 
